@@ -1,3 +1,5 @@
+![Sparrow](sparrow.png)
+
 Sparrow LLM is a mini llm inference engine
 
 # Dev log
