@@ -81,7 +81,7 @@ def load_model(model_name: str):
     print(f"model dir is {model_path}")
     
     # todo - what is the type of llama_config?
-    llama_config: dict[str, Any] = _read_config(model_path)
+    llama_config: dict[str, any] = _read_config(model_path)
     
     pprint(llama_config.get("rope_scaling"))
     
