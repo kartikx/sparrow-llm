@@ -19,6 +19,8 @@ class TestRotaryEmbedding(unittest.TestCase):
         head_dim = config.get("head_dim")
         num_attention_heads = config.get("num_attention_heads")
 
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         rotary_embedding = RotaryEmbedding(
             head_dim=head_dim,
             rope_theta=config.get("rope_theta"),
@@ -29,17 +31,17 @@ class TestRotaryEmbedding(unittest.TestCase):
             rope_original_max_position_embedding=rope_scaling.get(
                 "original_max_position_embeddings",
             ),
-        )
+        ).to(device)
 
         torch.manual_seed(0)
         B, H, T, D = 2, num_attention_heads, 4, head_dim
 
-        hf_rope = LlamaRotaryEmbedding(LlamaConfig(**config))
+        hf_rope = LlamaRotaryEmbedding(LlamaConfig(**config)).to(device)
 
-        q = torch.randn(B, H, T, D, dtype=torch.float32)
-        k = torch.randn(B, H, T, D, dtype=torch.float32)
+        q = torch.randn(B, H, T, D, dtype=torch.float32, device=device)
+        k = torch.randn(B, H, T, D, dtype=torch.float32, device=device)
 
-        pos = torch.arange(T).unsqueeze(0).repeat(B, 1)  # [B, T]
+        pos = torch.arange(T, device=device).unsqueeze(0).repeat(B, 1)  # [B, T]
 
         cos, sin = hf_rope(q, pos)
 
@@ -60,5 +62,3 @@ class TestRotaryEmbedding(unittest.TestCase):
             torch.allclose(k_hf, k_sprw, rtol=1e-4, atol=1e-5),
             msg=f"k: max abs diff = {(k_hf - k_sprw).abs().max().item():.2e}",
         )
-
-        print("success")

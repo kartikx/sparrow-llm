@@ -28,7 +28,8 @@ class RotaryEmbedding(nn.Module):
         freqs = torch.outer(positions, inv_freq_table)  # T, head_dim//2
         freqs = torch.cat((freqs, freqs), dim=-1)  # T, head_dim
 
-        # cached for future [B, H, T, D] pairs
+        # Cached for future [B, H, T, D] pairs. Buffers follow the module's
+        # device when you call .to(device) on a parent model.
         self.register_buffer(
             "cos_cache",
             freqs.cos().unsqueeze(0).unsqueeze(0),
