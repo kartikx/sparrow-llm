@@ -28,12 +28,8 @@ residual?
 import json
 from pathlib import Path
 import torch.nn as nn
-import torch.nn.functional as F
 from models.gqa import GroupedQueryAttention
 from models.mlp import SwiGLUFFN
-from models.norm import RMSNorm
-from models.rope import RotaryEmbedding
-from safetensors.torch import load_file
 import torch
 
 class MLP(nn.Module):
@@ -64,11 +60,14 @@ class DecoderLayer(nn.Module):
         self.input_layernorm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
         self.post_attention_layernorm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
 
+        num_attention_heads = config.get("num_attention_heads")
+        head_dim = config.get("head_dim") or (hidden_size // num_attention_heads)
+
         self.self_attn = GroupedQueryAttention(
-            num_attention_heads=config["num_attention_heads"],
+            num_attention_heads=num_attention_heads,
             num_key_value_heads=config["num_key_value_heads"],
             hidden_size=hidden_size,
-            head_dim=config["head_dim"],
+            head_dim=head_dim,
             attention_bias=config["attention_bias"],
             rope_theta=config["rope_theta"],
             max_position_embeddings=config["max_position_embeddings"],
@@ -119,38 +118,50 @@ class LlamaForCausalLM(nn.Module):
         super().__init__()
         
         self.model = LlamaModel(config)
+        self.tie_word_embeddings = bool(config.get("tie_word_embeddings"))
 
         self.lm_head = nn.Linear(config.get("hidden_size"), 
                                  config.get("vocab_size"),
                                  bias = False)
-        if config.get("tie_word_embeddings"):
-            self.lm_head.weight = self.model.embed_tokens.weight
+
+    def tie_weights(self, expected_missing: set | None):
+        self.lm_head.weight = self.model.embed_tokens.weight
+        if expected_missing is not None:
+            expected_missing.add("lm_head.weight")
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor :
         x = self.model(input_ids)
 
+        if x.dtype != self.lm_head.weight.dtype:
+            x = x.to(self.lm_head.weight.dtype)
         return self.lm_head(x)
 
-def load_weights(model: LlamaForCausalLM, shard_paths: list[str]):
-    state_dict = {}
-    for path in shard_paths:
-        state_dict.update(load_file(path, device="cpu"))
+    def load_weights(
+        self,
+        state_dict: dict[str, torch.Tensor],
+        *,
+        strict: bool = False,
+        verbose: bool = True,
+    ):
+        try:
+            # Fast path, but need to be careful about dtypes.
+            incompatible = self.load_state_dict(
+                state_dict,
+                strict=strict,
+                assign=True,
+            )
+        except TypeError:
+            incompatible = self.load_state_dict(state_dict, strict=strict)
 
-    # print(state_dict.keys())
+        expected_missing = set()
+        if self.tie_word_embeddings:
+            # assign=True can replace Parameter objects; re-tie after loading.
+            self.tie_weights(expected_missing)
 
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    
-    # print("missing: ", missing)
-    # print("unexpected: ", unexpected)
-
-if __name__ == '__main__':
-    shard_paths = [Path('/scratch/bcjw/kramesh/hub/models--meta-llama--Llama-3.2-1B/snapshots/4e20de362430cd3b72f300e6b0f18e50e7166e08/model.safetensors')]
-    
-    with open('config.json', 'r') as f:
-        config = json.loads(f.read())
+        unexpected_missing_keys = [k for k in incompatible.missing_keys if k not in expected_missing]
         
-    model = LlamaForCausalLM(config)
-        
-    load_weights(model, shard_paths)
+        if verbose and (unexpected_missing_keys or incompatible.unexpected_keys):
+            print("missing: ", unexpected_missing_keys)
+            print("unexpected: ", incompatible.unexpected_keys)
 
-    
+        return incompatible

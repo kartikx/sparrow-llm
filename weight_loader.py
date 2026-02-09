@@ -1,19 +1,22 @@
 # TODO - download, if does not exist.
 from __future__ import annotations
 
-import os
 import json
 from pathlib import Path
 from pprint import pprint
 from safetensors.torch import load_file
-from typing import TYPE_CHECKING
 
-import subprocess
+import torch
 
-if TYPE_CHECKING:
-    from torch import Tensor
+from models.llama import LlamaForCausalLM
 
 LLAMA_1B_PATH = "/scratch/bcjw/kramesh/hub/models--meta-llama--Llama-3.2-1B/snapshots/4e20de362430cd3b72f300e6b0f18e50e7166e08"
+
+dtype_map = {
+    "bfloat16": torch.bfloat16,
+    "float16": torch.float16,
+    "float32": torch.float32   
+}
 
 def _read_config(model_path: Path):
     cfg_path: Path = model_path.joinpath("config.json")
@@ -23,22 +26,22 @@ def _read_config(model_path: Path):
     
     return json.loads(cfg_path.read_text())
 
-def _model_dir(model: str) -> Path:
+def _locate_model_dir(model_name: str) -> Path:
     """
     Returns the hf model dir for the given model.
     Potentially downloading it from hf hub
     """
     from huggingface_hub import snapshot_download
     
-    return Path(snapshot_download(model, local_files_only=True))
+    return Path(snapshot_download(model_name, local_files_only=True))
 
-def _load_safetensors(model_path: Path) -> dict[str, Tensor]:
+def _load_safetensors(model_path: Path) -> dict[str, torch.Tensor]:
     """
     it should load weights from the safetensors into a dict, that we can then use
     to actually load the model on the GPU.
     """
 
-    weights: dict[str, Tensor] = {}
+    weights: dict[str, torch.Tensor] = {}
 
     safetensors_index_file: Path = model_path.joinpath("model.safetensors.index.json")
 
@@ -66,31 +69,35 @@ def _load_safetensors(model_path: Path) -> dict[str, Tensor]:
         if not safetensors_file.exists():
             raise FileNotFoundError(f"unable to find model.safetensors at {model_path}")
         
-        # todo -> this should eventually load on the cpu right?
         weights.update(load_file(safetensors_file, device="cpu"))
         
-    # otherwise you can just load the one file you have.
-     
     return weights
 
-def load_model(model_name: str):
-    # todo, how do I convert the model name -> where it is?
-    # I need to use something from hf_hub here, to figure this out.
-    model_path = _model_dir(model_name)
+def load_model(model_name: str, device: torch.device):
+    model_path = _locate_model_dir(model_name)
     
-    print(f"model dir is {model_path}")
-    
-    # todo - what is the type of llama_config?
     llama_config: dict[str, any] = _read_config(model_path)
     
-    pprint(llama_config.get("rope_scaling"))
     
-    # weights = _load_safetensors(model_path)
+    print("loading safetensors")
+    weights_dict = _load_safetensors(model_path)
+    print("loaded safetensors")
     
     # once the model has been loaded, i think we just need to map it to our Llama class,
     # and then invoke forward.
     
-    # first, use config to instantiate the model.
-    # next, use the weights to populate it.
-    # finally, invoke forward.
+    # todo - currently we only support one model.
+    # todo - how can we improve modularity?
+    model = LlamaForCausalLM(llama_config)
+
+    print("loading weights")
+    model.load_weights(weights_dict)
+    print("loaded weights")
+
+    model_dtype = llama_config.get("torch_dtype", None)
+    if model_dtype:
+        model_dtype = dtype_map[model_dtype]
+        model = model.to(device= device, dtype= model_dtype)
+
+    return model
     
