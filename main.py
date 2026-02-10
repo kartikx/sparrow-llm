@@ -17,18 +17,23 @@ def main(args: argparse.Namespace):
     
     tokenizer = AutoTokenizer.from_pretrained(args.model) 
     
-    for _ in range(20):
-        input_ids = tokenize(input_text, tokenizer).to(dvc)
+    kv_values = []
+    input_ids = tokenize(input_text, tokenizer).to(dvc) # [B, T]
+    print(f"input_ids: {input_ids.shape}")
     
-        logits = model(input_ids)
-    
-        output_ids = sample(logits)
-    
-        next_token = detokenize(output_ids, tokenizer)
-        
-        input_text += next_token
+    # prefill
+    logits, kv_values = model(input_ids, kv_values) # [B, T, V]
 
-        print(input_text)
+    for _ in range(10):
+        next_token = sample(logits[:, -1, :]) # [B]
+        next_input_ids = next_token.unsqueeze(1) # [B, T]
+        logits, kv_values = model(next_input_ids, kv_values)
+
+        # extend original input_ids to store generated sequence.
+        input_ids = torch.cat((input_ids, next_input_ids), dim=1)
+        
+        # only do for batch 0.
+        print(detokenize(input_ids[0], tokenizer))
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

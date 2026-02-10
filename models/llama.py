@@ -39,9 +39,6 @@ class MLP(nn.Module):
     def forward(x, input_tensor: torch.Tensor):
         pass
 
-# todo - how am i supposed to use the torch_dtype everywhere?
-
-
 class DecoderLayer(nn.Module):
     """
     This is one block of the Llama GPT architecture.
@@ -50,8 +47,10 @@ class DecoderLayer(nn.Module):
     then another residual?
     """
 
-    def __init__(self, config: dict[str, torch.Tensor]):
+    def __init__(self, config: dict[str, torch.Tensor], layer_idx: int):
         super().__init__()
+
+        self.layer_idx = layer_idx
 
         hidden_size = config["hidden_size"]
         rms_norm_eps = config["rms_norm_eps"]
@@ -83,13 +82,18 @@ class DecoderLayer(nn.Module):
             mlp_bias=config["mlp_bias"],
         )
 
-    def forward(self, input_tensor: torch.Tensor):
+    def forward(self, input_tensor: torch.Tensor, past_key_values: torch.Tensor):
         x = input_tensor
-        attn_out = self.self_attn(self.input_layernorm(x))
+        attn_out, updated_key_values = self.self_attn(self.input_layernorm(x), past_key_values)
+
+        if self.layer_idx == 0:
+            print(f"[DecoderLayer] Past past_key_values: {past_key_values.shape if past_key_values is not None else None}")
+            print(f"[DecoderLayer] Updated past_key_values: {updated_key_values.shape}")
+
         x = x + attn_out
 
         ffn_out = self.mlp(self.post_attention_layernorm(x))
-        return x + ffn_out
+        return x + ffn_out, updated_key_values
 
 class LlamaModel(nn.Module):
     def __init__(self, config: dict[str, torch.Tensor]):
@@ -100,18 +104,26 @@ class LlamaModel(nn.Module):
 
         self.embed_tokens = nn.Embedding(config["vocab_size"], config["hidden_size"])
         self.norm = nn.RMSNorm(hidden_size, rms_norm_eps)
-        self.layers = nn.ModuleList([DecoderLayer(config)
-                       for _ in range(config.get("num_hidden_layers", 0))])
+        self.layers = nn.ModuleList([DecoderLayer(config, idx)
+                       for idx in range(config.get("num_hidden_layers", 0))])
 
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_ids: torch.Tensor, past_key_values: list[torch.Tensor]) -> (torch.Tensor, list[torch.Tensor]):
+        
+        if past_key_values is not None and len(past_key_values) > 0:
+            print(f"[LlamaModel] Past KV length: {len(past_key_values)}")
+            print(f"[LlamaModel] First KV shape: {past_key_values[0].shape}")
+        
         input_ids = input_ids.to(dtype=torch.long)
 
         x = self.embed_tokens(input_ids)
+        updated_key_values = []
 
-        for decoder in self.layers:
-            x = decoder(x) 
+        for idx, decoder in enumerate(self.layers):
+            layer_past = past_key_values[idx] if len(past_key_values) > 0 and past_key_values is not None else None
+            x, layer_updated = decoder(x, layer_past)
+            updated_key_values.append(layer_updated)
 
-        return self.norm(x)
+        return self.norm(x), updated_key_values
 
 class LlamaForCausalLM(nn.Module):
     def __init__(self, config: dict[str, torch.Tensor]):
@@ -129,12 +141,12 @@ class LlamaForCausalLM(nn.Module):
         if expected_missing is not None:
             expected_missing.add("lm_head.weight")
 
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor :
-        x = self.model(input_ids)
+    def forward(self, input_ids: torch.Tensor, past_kv_values: list[torch.Tensor]) -> (torch.Tensor, list[torch.Tensor]) :
+        x, updated_kv_values = self.model(input_ids, past_kv_values)
 
         if x.dtype != self.lm_head.weight.dtype:
             x = x.to(self.lm_head.weight.dtype)
-        return self.lm_head(x)
+        return self.lm_head(x), updated_kv_values
 
     def load_weights(
         self,

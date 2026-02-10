@@ -52,7 +52,7 @@ class GroupedQueryAttention(nn.Module):
                                                 rope_low_freq_factor, rope_original_max_position_embedding)
 
     # input_tensor [B, T, h_q*D]
-    def forward(self, input_tensor: torch.Tensor):
+    def forward(self, input_tensor: torch.Tensor, past_key_values: torch.Tensor) -> (torch.Tensor, torch.Tensor) :
         B, T, _ = input_tensor.shape
 
         q: torch.Tensor = self.q_proj(input_tensor)  # [B, T, h_q * D]
@@ -66,18 +66,33 @@ class GroupedQueryAttention(nn.Module):
         v = v.view(B, T, self.num_key_value_heads,
                    self.head_dim).transpose(1, 2)  # [B, h_kv, T, D]
 
+        # todo - verify that indexing is correct.
+        # past key value shape is [1, B, h_kv, T, D]
+        if past_key_values is not None:
+            k = torch.concat((past_key_values[0], k), dim=2)
+            v = torch.concat((past_key_values[1], v), dim=2)
+
+        # print(f"[GQA] q: {q.shape}, k: {k.shape}, v: {v.shape}")
+
         q, k = self.rotary_embedding(q, k)
 
         # convert [h0, h1, .., h7] -> [h0, h0, .. h0] [h1, h1 .. h1] ... [h7, h7 .. h7]
-        k = k.repeat_interleave(
-            self.num_attention_heads // self.num_key_value_heads, dim=1)
-        v = v.repeat_interleave(
-            self.num_attention_heads // self.num_key_value_heads, dim=1)
+        repeat_times = self.num_attention_heads // self.num_key_value_heads 
+        k = k.repeat_interleave(repeat_times, dim=1) # [B, h_q, T, D]
+        v = v.repeat_interleave(repeat_times, dim=1)
 
         att = self.self_attention(q, k, v)  # [B, h_q, T, D]
 
         att = att.transpose(1, 2).reshape(B, T, -1)
-        return self.o_proj(att)
+
+        # un-interleave before inserting into kv_cache.
+        k = k.view(B, self.num_key_value_heads, repeat_times, -1, self.head_dim)
+        k = k[:, :, 0, :, :]
+
+        v = v.view(B, self.num_key_value_heads, repeat_times, -1, self.head_dim)
+        v = v[:, :, 0, :, :]        
+
+        return self.o_proj(att), torch.stack((k, v))
 
 def test_self_attention():
     B, T, D = 2, 4, 4

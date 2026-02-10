@@ -13,9 +13,6 @@ Input: [B, T, vocab_size]
 Output: [B, 1]
 """
 def sample(logits: torch.Tensor) -> torch.Tensor:
-    # todo - if padding, then this will be incorrect.
-    logits = logits[:, -1, :]
-    
     # todo - we can skip softmax too.
     scores = F.softmax(logits, dim=-1) # [B, V]
     
