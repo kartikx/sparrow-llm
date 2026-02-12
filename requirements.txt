@@ -2,3 +2,5 @@ torch
 transformers
 safetensors
 huggingface_hub
+fastapi
+uvicorn[standard]

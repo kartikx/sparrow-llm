@@ -1,6 +1,6 @@
 import torch
-from io_model import GenerateRequest
-from weight_loader import load_model
+from app.io_model import GenerateRequest
+from core.weight_loader import load_model
 from transformers import AutoTokenizer
 from tokenization.tokenizer import tokenize, detokenize, sample
 

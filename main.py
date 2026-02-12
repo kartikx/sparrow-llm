@@ -1,12 +1,21 @@
 import argparse
-from engine import Engine
-from utils import setup_logging
 import logging
 import uvicorn
 
-from http_server import app
+from core.engine import Engine
+from core.utils import setup_logging
+from app.api_server import app
 
 logger = logging.getLogger(__name__)
+
+def main(args):
+    setup_logging(args.log_level)
+    
+    engine = Engine(args)
+    
+    app.state.engine = engine
+    
+    uvicorn.run(app, host="0.0.0.0", port=args.port)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -18,10 +27,3 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
-    setup_logging(args.log_level)
-    
-    engine = Engine(args)
-    
-    app.state.engine = engine
-    
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
