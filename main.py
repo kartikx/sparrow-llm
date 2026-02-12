@@ -1,45 +1,27 @@
-from weight_loader import load_model
-from tokenization.tokenizer import tokenize, detokenize, sample
-
 import argparse
-from transformers import AutoTokenizer
-import torch
+from engine import Engine
+from utils import setup_logging
+import logging
+import uvicorn
 
-@torch.inference_mode()
-def main(args: argparse.Namespace):
-    dvc = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+from http_server import app
 
-    print('loading model')
-    model = load_model(args.model, dvc)
-    print('loaded model')
-    
-    input_text = "hey guys, it is me"
-    
-    tokenizer = AutoTokenizer.from_pretrained(args.model) 
-    
-    kv_values = []
-    input_ids = tokenize(input_text, tokenizer).to(dvc) # [B, T]
-    print(f"input_ids: {input_ids.shape}")
-    
-    # prefill
-    logits, kv_values = model(input_ids, kv_values) # [B, T, V]
+logger = logging.getLogger(__name__)
 
-    for _ in range(10):
-        next_token = sample(logits[:, -1, :]) # [B]
-        next_input_ids = next_token.unsqueeze(1) # [B, T]
-        logits, kv_values = model(next_input_ids, kv_values)
-
-        # extend original input_ids to store generated sequence.
-        input_ids = torch.cat((input_ids, next_input_ids), dim=1)
-        
-        # only do for batch 0.
-        print(detokenize(input_ids[0], tokenizer))
-    
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('--model', type=str, required=True)
+    parser.add_argument('--model', type=str, default=None)
+    parser.add_argument('--port', type=int, default=8080)
+    parser.add_argument('--log-level', type=str, default="INFO",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
     
     args = parser.parse_args()
     
-    main(args)
+    setup_logging(args.log_level)
+    
+    engine = Engine(args)
+    
+    app.state.engine = engine
+    
+    uvicorn.run(app, host="0.0.0.0", port=args.port)

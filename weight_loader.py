@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from pprint import pprint
 from safetensors.torch import load_file
 
 import torch
+import logging
+
+logger = logging.getLogger(__name__)
 
 from models.llama import LlamaForCausalLM
 
@@ -79,9 +81,9 @@ def load_model(model_name: str, device: torch.device):
     llama_config: dict[str, any] = _read_config(model_path)
     
     
-    print("loading safetensors")
+    logger.debug("loading safetensors")
     weights_dict = _load_safetensors(model_path)
-    print("loaded safetensors")
+    logger.debug("loaded safetensors")
     
     # once the model has been loaded, i think we just need to map it to our Llama class,
     # and then invoke forward.
@@ -90,14 +92,14 @@ def load_model(model_name: str, device: torch.device):
     # todo - how can we improve modularity?
     model = LlamaForCausalLM(llama_config)
 
-    print("loading weights")
+    logger.debug("loading weights")
     model.load_weights(weights_dict)
-    print("loaded weights")
+    logger.debug("loaded weights")
 
     model_dtype = llama_config.get("torch_dtype", None)
     if model_dtype:
         model_dtype = dtype_map[model_dtype]
-        model = model.to(device= device, dtype= model_dtype)
+        model = model.to(device=device, dtype= model_dtype)
 
     return model
     

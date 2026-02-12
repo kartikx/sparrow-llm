@@ -1,36 +1,10 @@
-"""
-- What layers do I need.
-- How do I tokenizer it?
-- How do i invoke it with a request?
-"""
-
-"""
-Layers
-
-- input layer-norm
-
-- attention block
-    - q, k, v
-    - self-attention
-    - output projection
-
-layer-norm
-
-residual
-    
-- mlp
-    - up proj
-    - down proj
-
-residual?
-"""
-
-import json
-from pathlib import Path
 import torch.nn as nn
 from models.gqa import GroupedQueryAttention
 from models.mlp import SwiGLUFFN
 import torch
+import logging
+
+logger = logging.getLogger(__name__)
 
 class MLP(nn.Module):
     def __init__(self, config: dict[str, torch.Tensor]):
@@ -87,8 +61,8 @@ class DecoderLayer(nn.Module):
         attn_out, updated_key_values = self.self_attn(self.input_layernorm(x), past_key_values)
 
         if self.layer_idx == 0:
-            print(f"[DecoderLayer] Past past_key_values: {past_key_values.shape if past_key_values is not None else None}")
-            print(f"[DecoderLayer] Updated past_key_values: {updated_key_values.shape}")
+            logger.debug("[DecoderLayer] Past past_key_values: %s", past_key_values.shape if past_key_values is not None else None)
+            logger.debug("[DecoderLayer] Updated past_key_values: %s", updated_key_values.shape)
 
         x = x + attn_out
 
@@ -110,8 +84,8 @@ class LlamaModel(nn.Module):
     def forward(self, input_ids: torch.Tensor, past_key_values: list[torch.Tensor]) -> (torch.Tensor, list[torch.Tensor]):
         
         if past_key_values is not None and len(past_key_values) > 0:
-            print(f"[LlamaModel] Past KV length: {len(past_key_values)}")
-            print(f"[LlamaModel] First KV shape: {past_key_values[0].shape}")
+            logger.debug("[LlamaModel] Past KV length: %d", len(past_key_values))
+            logger.debug("[LlamaModel] First KV shape: %s", past_key_values[0].shape)
         
         input_ids = input_ids.to(dtype=torch.long)
 
@@ -173,7 +147,7 @@ class LlamaForCausalLM(nn.Module):
         unexpected_missing_keys = [k for k in incompatible.missing_keys if k not in expected_missing]
         
         if verbose and (unexpected_missing_keys or incompatible.unexpected_keys):
-            print("missing: ", unexpected_missing_keys)
-            print("unexpected: ", incompatible.unexpected_keys)
+            logger.warn("missing keys: %s", unexpected_missing_keys)
+            logger.warn("unexpected keys: %s", incompatible.unexpected_keys)
 
         return incompatible
