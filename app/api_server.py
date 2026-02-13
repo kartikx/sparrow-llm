@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request
-from io_model import GenerateRequest, GenerateResponse
-from engine import Engine
+from app.io_model import GenerateRequest, GenerateResponse
+from core.engine import Engine
 import logging
 
 logger = logging.getLogger(__name__)

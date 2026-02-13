@@ -73,3 +73,10 @@ pip-delete-this-directory.txt
 # OS files
 .DS_Store
 Thumbs.db
+
+# configs
+config.json
+model.safetensors
+model.safetensors.index.json
+
+.venv312/

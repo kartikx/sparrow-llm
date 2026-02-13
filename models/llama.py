@@ -1,4 +1,6 @@
 import torch.nn as nn
+from core.cache import CacheManager
+from models.base import BaseLLMModel
 from models.gqa import GroupedQueryAttention
 from models.mlp import SwiGLUFFN
 import torch
@@ -56,18 +58,19 @@ class DecoderLayer(nn.Module):
             mlp_bias=config["mlp_bias"],
         )
 
-    def forward(self, input_tensor: torch.Tensor, past_key_values: torch.Tensor):
+    def forward(self, input_tensor: torch.Tensor, cache_manager: CacheManager, rid: int):
         x = input_tensor
-        attn_out, updated_key_values = self.self_attn(self.input_layernorm(x), past_key_values)
+        attn_out = self.self_attn(self.input_layernorm(x), cache_manager, rid, self.layer_idx)
 
-        if self.layer_idx == 0:
-            logger.debug("[DecoderLayer] Past past_key_values: %s", past_key_values.shape if past_key_values is not None else None)
-            logger.debug("[DecoderLayer] Updated past_key_values: %s", updated_key_values.shape)
+        # todo - remove.
+        # if self.layer_idx == 0:
+        #     logger.debug("[DecoderLayer] Past past_key_values: %s", past_key_values.shape if past_key_values is not None else None)
+        #     logger.debug("[DecoderLayer] Updated past_key_values: %s", updated_key_values.shape)
 
         x = x + attn_out
 
         ffn_out = self.mlp(self.post_attention_layernorm(x))
-        return x + ffn_out, updated_key_values
+        return x + ffn_out
 
 class LlamaModel(nn.Module):
     def __init__(self, config: dict[str, torch.Tensor]):
@@ -81,29 +84,27 @@ class LlamaModel(nn.Module):
         self.layers = nn.ModuleList([DecoderLayer(config, idx)
                        for idx in range(config.get("num_hidden_layers", 0))])
 
-    def forward(self, input_ids: torch.Tensor, past_key_values: list[torch.Tensor]) -> (torch.Tensor, list[torch.Tensor]):
-        
-        if past_key_values is not None and len(past_key_values) > 0:
-            logger.debug("[LlamaModel] Past KV length: %d", len(past_key_values))
-            logger.debug("[LlamaModel] First KV shape: %s", past_key_values[0].shape)
+    def forward(self, input_ids: torch.Tensor, cache_manager: CacheManager, rid: int) -> torch.Tensor:
+        # todo - get rid.
+        # if past_key_values is not None and len(past_key_values) > 0:
+        #     logger.debug("[LlamaModel] Past KV length: %d", len(past_key_values))
+        #     logger.debug("[LlamaModel] First KV shape: %s", past_key_values[0].shape)
         
         input_ids = input_ids.to(dtype=torch.long)
 
         x = self.embed_tokens(input_ids)
-        updated_key_values = []
 
         for idx, decoder in enumerate(self.layers):
-            layer_past = past_key_values[idx] if len(past_key_values) > 0 and past_key_values is not None else None
-            x, layer_updated = decoder(x, layer_past)
-            updated_key_values.append(layer_updated)
+            x = decoder(x, cache_manager, rid)
 
-        return self.norm(x), updated_key_values
+        return self.norm(x)
 
-class LlamaForCausalLM(nn.Module):
+class LlamaForCausalLM(BaseLLMModel):
     def __init__(self, config: dict[str, torch.Tensor]):
         super().__init__()
         
         self.model = LlamaModel(config)
+        self.config = config
         self.tie_word_embeddings = bool(config.get("tie_word_embeddings"))
 
         self.lm_head = nn.Linear(config.get("hidden_size"), 
@@ -115,12 +116,13 @@ class LlamaForCausalLM(nn.Module):
         if expected_missing is not None:
             expected_missing.add("lm_head.weight")
 
-    def forward(self, input_ids: torch.Tensor, past_kv_values: list[torch.Tensor]) -> (torch.Tensor, list[torch.Tensor]) :
-        x, updated_kv_values = self.model(input_ids, past_kv_values)
+    def forward(self, input_ids: torch.Tensor, cache_manager: CacheManager, rid: int) -> torch.Tensor :
+        x = self.model(input_ids, cache_manager, rid)
 
         if x.dtype != self.lm_head.weight.dtype:
             x = x.to(self.lm_head.weight.dtype)
-        return self.lm_head(x), updated_kv_values
+
+        return self.lm_head(x)
 
     def load_weights(
         self,
@@ -147,7 +149,7 @@ class LlamaForCausalLM(nn.Module):
         unexpected_missing_keys = [k for k in incompatible.missing_keys if k not in expected_missing]
         
         if verbose and (unexpected_missing_keys or incompatible.unexpected_keys):
-            logger.warn("missing keys: %s", unexpected_missing_keys)
-            logger.warn("unexpected keys: %s", incompatible.unexpected_keys)
+            logger.warning("missing keys: %s", unexpected_missing_keys)
+            logger.warning("unexpected keys: %s", incompatible.unexpected_keys)
 
         return incompatible

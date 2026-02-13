@@ -15,6 +15,15 @@ Sparrow LLM is a mini llm inference engine
     - [ ] Tensor Parallelism
     - [ ] Radix Tree
 - [ ] usability
-    - [ ] Connect with an HTTP endpoint, hit /generate.
+    - [x] Connect with an HTTP endpoint, hit /generate.
 - [ ] testing
     - [ ] add an all-close test with hf 1B, 8B.
+
+# General Sequence of improvements
+- [ ] One request with KV caching
+- [ ] Continuous Batching
+- [ ] PagedAttention
+- [ ] RadixCaching
+- [ ] Chunked Prefill
+- [ ] Overlap Scheduler
+- [ ] Better Kernels

@@ -1,4 +1,3 @@
-# TODO - download, if does not exist.
 from __future__ import annotations
 
 import json
@@ -8,11 +7,12 @@ from safetensors.torch import load_file
 import torch
 import logging
 
+from typing import Any
+
 logger = logging.getLogger(__name__)
 
+from models.base import BaseLLMModel
 from models.llama import LlamaForCausalLM
-
-LLAMA_1B_PATH = "/scratch/bcjw/kramesh/hub/models--meta-llama--Llama-3.2-1B/snapshots/4e20de362430cd3b72f300e6b0f18e50e7166e08"
 
 dtype_map = {
     "bfloat16": torch.bfloat16,
@@ -35,7 +35,7 @@ def _locate_model_dir(model_name: str) -> Path:
     """
     from huggingface_hub import snapshot_download
     
-    return Path(snapshot_download(model_name, local_files_only=True))
+    return Path(snapshot_download(model_name, local_files_only=False))
 
 def _load_safetensors(model_path: Path) -> dict[str, torch.Tensor]:
     """
@@ -75,22 +75,26 @@ def _load_safetensors(model_path: Path) -> dict[str, torch.Tensor]:
         
     return weights
 
-def load_model(model_name: str, device: torch.device):
+def load_model(model_name: str, device: torch.device) -> BaseLLMModel | None:
     model_path = _locate_model_dir(model_name)
     
-    llama_config: dict[str, any] = _read_config(model_path)
-    
+    llama_config: dict[str, Any] = _read_config(model_path)
     
     logger.debug("loading safetensors")
     weights_dict = _load_safetensors(model_path)
     logger.debug("loaded safetensors")
     
-    # once the model has been loaded, i think we just need to map it to our Llama class,
-    # and then invoke forward.
+    model: BaseLLMModel | None = None
     
-    # todo - currently we only support one model.
-    # todo - how can we improve modularity?
-    model = LlamaForCausalLM(llama_config)
+    model_type = llama_config.get("model_type", None)
+    
+    assert model_type is not None, "unable to get model_type from model config"
+    
+    match model_type:
+        case "llama":
+            model = LlamaForCausalLM(llama_config)
+        case _:
+            raise ValueError(f"Unssupported model_type: {model_type}")
 
     logger.debug("loading weights")
     model.load_weights(weights_dict)

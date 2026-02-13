@@ -1,4 +1,5 @@
 import math
+from core.cache import CacheManager
 from models.rope import RotaryEmbedding
 import torch
 import torch.nn as nn
@@ -52,7 +53,9 @@ class GroupedQueryAttention(nn.Module):
                                                 rope_low_freq_factor, rope_original_max_position_embedding)
 
     # input_tensor [B, T, h_q*D]
-    def forward(self, input_tensor: torch.Tensor, past_key_values: torch.Tensor) -> (torch.Tensor, torch.Tensor) :
+    # todo for inferencing, should i get rid of the batch term?
+    # todo cache manager could be set at __init__
+    def forward(self, input_tensor: torch.Tensor, cache_manager: CacheManager, rid: int, layer_idx: int) -> (torch.Tensor, torch.Tensor) :
         B, T, _ = input_tensor.shape
 
         q: torch.Tensor = self.q_proj(input_tensor)  # [B, T, h_q * D]
@@ -66,15 +69,16 @@ class GroupedQueryAttention(nn.Module):
         v = v.view(B, T, self.num_key_value_heads,
                    self.head_dim).transpose(1, 2)  # [B, h_kv, T, D]
 
-        # todo - verify that indexing is correct.
-        # past key value shape is [1, B, h_kv, T, D]
-        if past_key_values is not None:
-            k = torch.concat((past_key_values[0], k), dim=2)
-            v = torch.concat((past_key_values[1], v), dim=2)
+        # past_k -> T, h_kv, D
+        # with B -> B, T, h_kv, D
+        past_k, past_v, past_len = cache_manager.get_kv(rid, layer_idx)
+        if past_k is not None and past_v is not None:
+            past_k = past_k.permute(1, 0, 2).unsqueeze(0)
+            past_v = past_v.permute(1, 0, 2).unsqueeze(0)
+            k = torch.cat([past_k, k], dim=2)
+            v = torch.cat([past_v, v], dim=2)
 
-        # print(f"[GQA] q: {q.shape}, k: {k.shape}, v: {v.shape}")
-
-        q, k = self.rotary_embedding(q, k)
+        q, k = self.rotary_embedding(q, k, past_len)
 
         # convert [h0, h1, .., h7] -> [h0, h0, .. h0] [h1, h1 .. h1] ... [h7, h7 .. h7]
         repeat_times = self.num_attention_heads // self.num_key_value_heads 
@@ -87,12 +91,14 @@ class GroupedQueryAttention(nn.Module):
 
         # un-interleave before inserting into kv_cache.
         k = k.view(B, self.num_key_value_heads, repeat_times, -1, self.head_dim)
-        k = k[:, :, 0, :, :]
-
         v = v.view(B, self.num_key_value_heads, repeat_times, -1, self.head_dim)
-        v = v[:, :, 0, :, :]        
 
-        return self.o_proj(att), torch.stack((k, v))
+        k = k[:, :, 0, past_len:, :] # (1, h_kv, T, D]
+        v = v[:, :, 0, past_len:, :]        
+
+        cache_manager.store_kv(rid, layer_idx, k.squeeze(0).permute(1, 0, 2), v.squeeze(0).permute(1, 0, 2))
+
+        return self.o_proj(att)
 
 def test_self_attention():
     B, T, D = 2, 4, 4

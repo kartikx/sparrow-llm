@@ -75,16 +75,25 @@ class RotaryEmbedding(nn.Module):
 
         return torch.cat((-x2, x1), dim=-1)
 
-    def forward(self, query: torch.Tensor, key: torch.Tensor):
+    def forward(self, query: torch.Tensor, key: torch.Tensor, offset: int = 0):
         """
         Expects Query, Key -> [B, H, T, D]
-        cos_cache, sin_cache -> [1, T, D]
-        """
-        seq_len = query.shape[2]
-        cos = self.cos_cache[..., :seq_len, :]
-        sin = self.sin_cache[..., :seq_len, :]
+        cos_cache, sin_cache -> [1, 1, max_T, D]
 
-        query = query * cos + self.rotate_half(query) * sin
-        key = key * cos + self.rotate_half(key) * sin
+        Query: only new tokens, at positions [offset, offset+1, ..., offset+T_new-1].
+        Key: full context (past + new), at positions [0, 1, ..., past_len+T_new-1].
+
+        So query needs cos/sin[offset : offset+T_new], key needs cos/sin[0 : key.shape[2]].
+        """
+        q_len = query.shape[2]
+        k_len = key.shape[2]
+
+        cos_q = self.cos_cache[..., offset : offset + q_len, :]
+        sin_q = self.sin_cache[..., offset : offset + q_len, :]
+        cos_k = self.cos_cache[..., :k_len, :]
+        sin_k = self.sin_cache[..., :k_len, :]
+
+        query = query * cos_q + self.rotate_half(query) * sin_q
+        key = key * cos_k + self.rotate_half(key) * sin_k
 
         return query, key
